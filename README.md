@@ -1,9 +1,15 @@
 (paths just for reference)
+
 cd Workspaces/proj2_ws/src
+
 git clone ...
+
 cd Workspaces/proj2_ws
+
 colcon build --symlink-install
+
 source ./install/setup.bash
+
 
 Commands (as of now):
 - ros2 launch dot_nav sim.launch.py
