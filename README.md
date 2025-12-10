@@ -1,12 +1,16 @@
+model used: qwen vl series
+
+setup:
+- python3 -m venv --system-site-packages venv
+- source venv/bin/activate
+- pip install -U openai
+- get api key and set as env variable
+
 (paths just for reference)
-
-cd Workspaces/proj2_ws/src
-
-git clone ...
-
-cd Workspaces/proj2_ws
-
-colcon build --symlink-install
+- cd Workspaces/proj2_ws/src
+- git clone ...
+- cd Workspaces/proj2_ws
+- colcon build --symlink-install
 
 source ./install/setup.bash
 
