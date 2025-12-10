@@ -244,7 +244,7 @@
       <topic>camera/image</topic>
       <update_rate>5</update_rate>
       <camera>
-        <horizontal_fov>1.3962634</horizontal_fov>
+        <horizontal_fov>1.5708</horizontal_fov>
         <image>
           <width>640</width>
           <height>480</height>
