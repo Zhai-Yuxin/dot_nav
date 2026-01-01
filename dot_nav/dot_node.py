@@ -5,12 +5,15 @@ from rclpy.action import ActionClient
 from geometry_msgs.msg import Pose, PoseStamped
 from tf2_msgs.msg import TFMessage
 from sensor_msgs.msg import Image
+# from sensor_msgs.msg import PointCloud2
+# from sensor_msgs_py import point_cloud2
 
 import math
 import threading
 from time import sleep
 from cv_bridge import CvBridge
 import cv2
+import numpy as np
 
 from openai import OpenAI
 import os
@@ -25,11 +28,15 @@ class DotNode(Node):
         self.get_gt = False
 
         self.bridge = CvBridge()
-        self.subscription = self.create_subscription(Image, '/camera/image', self.image_callback, 1)
+        self.img_sub = self.create_subscription(Image, '/camera/image', self.image_callback, 1)
         self.view = None
         self.viewcount = 0
         self.get_view = False
         self.image_dir = '/root/Workspaces/camera_images/'
+
+        # self.img_depth_sub = self.create_subscription(PointCloud2, '/depth_camera/points', self.image_depth_callback, 1)
+        # self.view_depth = None
+        # self.get_view_depth = False
 
         self.nav_client = ActionClient(self, NavigateToPose, '/navigate_to_pose')
 
@@ -57,7 +64,7 @@ class DotNode(Node):
             self.get_view = True
             self.get_gt = True
             while self.gt is None or self.view is None:
-                sleep(0.1)
+                sleep(1)
 
             print(self.gt)
             filepath = self.image_dir + 'camera_image_' + str(self.viewcount) + '.png'
@@ -67,10 +74,11 @@ class DotNode(Node):
             instr = (
                 f"Instruction: {user_input}.\n"
                 f"The robot has a current state: {self.gt}.\n"
-                "The image is from the camera at the front of the robot, with horizontal_fov set to 1.5708 (90 degrees view) and clip distance from 0.1 to 10.\n"
-                "Based on the instruction, current position, and view, output the single line next targeted position in terms of x, y and yaw in degrees.\n"
-                "Example output: <target>x=1.0, y=1.0, yaw=45.0</target>\n"
-                "If the instruction is already accomplished by the current state, no need for <target>, just output 'Instruction accomplished.'."
+                "The image is from the camera at the front of the robot, with horizontal_fov set to 1.5708 and clip distance from 0.1 to 10.\n"
+                "Based on the current position, and view, output the single line next targeted position in terms of x, y and yaw in degrees with a short description to achieve the instruction.\n"
+                "Example output: <description>forward 2m and left 1m, face 45 degrees</description> <target>x=1.0, y=1.0, yaw=45.0</target>\n"
+                "If the instruction cannot be accomplished in one step, output the next best step.\n"
+                "If the instruction is already accomplished by the current state, just output 'Instruction accomplished.'."
             )
             messages=[
                 {
@@ -82,12 +90,14 @@ class DotNode(Node):
                 },
             ]
 
-            completion = self.client.chat.completions.create(
-                model="qwen3-vl-plus",  # For a list of models, see https://www.alibabacloud.com/help/model-studio/getting-started/models
-                messages=messages
-            )
-            output = completion.choices[0].message.content
-            print("Output: ", output)
+            ## add try except block warp for api call
+            # completion = self.client.chat.completions.create(
+            #     model="qwen3-vl-plus",  # For a list of models, see https://www.alibabacloud.com/help/model-studio/getting-started/models
+            #     messages=messages
+            # )
+            # output = completion.choices[0].message.content
+            # print("Output: ", output)
+            output = "1"  # Placeholder for testing without API call
 
             match = re.search(r"<target>(.*?)</target>", output)
             if match:
@@ -95,7 +105,7 @@ class DotNode(Node):
                 vals = {k: float(v) for k, v in re.findall(r"(x|y|yaw)\s*=\s*([\d\.\-]+)", content)}
                 x = vals.get("x")
                 y = vals.get("y")
-                yaw = vals.get("yaw")
+                yaw = vals.get("yaw") # + math.degrees(2*math.atan2(self.gt.orientation.z, self.gt.orientation.w))
             elif output.strip() == "Instruction accomplished.":
                 print("Instruction accomplished.")
                 x = None
@@ -115,6 +125,53 @@ class DotNode(Node):
             self.viewcount += 1
             self.gt = None
             self.view = None
+
+    # def image_depth_callback(self, msg: PointCloud2):
+    #     if self.get_view_depth:
+    #         print("0")
+    #         # PointCloud2 → list of (x, y, z)
+    #         points_list = list(point_cloud2.read_points(msg, field_names=('x', 'y', 'z'), skip_nans=True))
+    #         if len(points_list) == 0:
+    #             return
+    #         print("0.5")
+    #         points = np.array(points_list, dtype=np.float32)
+    #         print("0.7")
+    #         if points.ndim != 2 or points.shape[1] != 3:
+    #             print("Invalid point cloud shape:", points.shape)
+    #             return
+    #         print("1")
+    #         fx = 320  #cam_info.k[0]
+    #         fy = 320  #cam_info.k[4]
+    #         cx = 320  #cam_info.k[2]
+    #         cy = 240  #cam_info.k[5]
+    #         width = 640
+    #         height = 480
+    #         self.view_depth = np.zeros((height, width), dtype=np.float32)
+    #         print("2")
+    #         # Project points to image plane
+    #         X = points[:, 0]
+    #         Y = points[:, 1]
+    #         Z = points[:, 2]
+    #         # Filter Z ≤ 0 (behind camera or invalid)
+    #         valid = Z > 0
+    #         X = X[valid]; Y = Y[valid]; Z = Z[valid]
+    #         print("3")
+    #         # Pixel coordinates
+    #         u = (X * fx / Z + cx).astype(np.int32)
+    #         v = (Y * fy / Z + cy).astype(np.int32)
+    #         print("4")
+    #         # Keep only pixels inside the image range
+    #         in_bounds = (u >= 0) & (u < width) & (v >= 0) & (v < height)
+    #         u = u[in_bounds]
+    #         v = v[in_bounds]
+    #         Z = Z[in_bounds]
+    #         print("5")
+    #         # Fill depth image (keep nearest point for each pixel)
+    #         for uu, vv, zz in zip(u, v, Z):
+    #             if self.view_depth[vv, uu] == 0 or zz < self.view_depth[vv, uu]:
+    #                 self.view_depth[vv, uu] = zz
+    #         print("6")
+    #         self.get_view_depth = False
 
     def image_callback(self, msg):
         try:

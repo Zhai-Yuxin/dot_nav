@@ -61,13 +61,6 @@ def generate_launch_description():
             parameters=[{"use_sim_time": True}],
         )
 
-    # dot_node = Node(
-    #         package='dot_nav',
-    #         executable='dot_node',
-    #         name='dot_node',
-    #         output='screen',
-    #     )
-
     return LaunchDescription([
         gazebo_launch,
         spawn_entity,
@@ -76,6 +69,13 @@ def generate_launch_description():
         rviz_launch,
     ])
 
+
+    # dot_node = Node(
+    #         package='dot_nav',
+    #         executable='dot_node',
+    #         name='dot_node',
+    #         output='screen',
+    #     )
 
     # ekf_node = Node(
     #     package='robot_localization',
