@@ -13,8 +13,9 @@ setup:
 - colcon build --symlink-install
 - source ./install/setup.bash
 
-Commands (as of now):
+Commands to run:
 - ros2 launch dot_nav sim.launch.py
-- ros2 launch slam_toolbox online_async_launch.py use_sim_time:=true
-- ros2 launch nav2_bringup navigation_launch.py params_file:=/root/Workspaces/proj2_ws/src/dot_nav/configs/nav2_params.yaml use_sim_time:=true
 - python3 ./proj2_ws/src/dot_nav/dot_nav/dot_node.py
+
+(save map) rvix2 -> panel -> add new panel for slam_toolbox -> save & serialize map
+- rmb to update mapper_params_online_async.yaml and sim.launch.py for switch between mapping and localisation mode for slam
