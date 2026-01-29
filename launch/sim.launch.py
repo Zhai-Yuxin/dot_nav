@@ -8,10 +8,13 @@ import os
 def generate_launch_description():
 
     robot_name = 'simple_car'
-    gz_world = '/root/Workspaces/proj2_ws/src/dot_nav/worlds/simple_shapes.sdf'
+    # gz_world = '/root/Workspaces/proj2_ws/src/dot_nav/worlds/simple_shapes.sdf'
+    gz_world = '/root/Workspaces/proj2_ws/src/dot_nav/worlds/two_rooms.sdf'
     robot_urdf = '/root/Workspaces/proj2_ws/src/dot_nav/descriptions/simple_car.urdf'
-    bridge_params = "/root/Workspaces/proj2_ws/src/dot_nav/configs/bridge_params.yaml"
+    bridge_params = '/root/Workspaces/proj2_ws/src/dot_nav/configs/bridge_params.yaml'
     rviz_world = '/root/Workspaces/proj2_ws/src/dot_nav/configs/rviz_robot_config.rviz'
+    nav2_params = '/root/Workspaces/proj2_ws/src/dot_nav/configs/nav2_params.yaml'
+    slam_params = '/root/Workspaces/proj2_ws/src/dot_nav/configs/mapper_params_online_async.yaml'
 
     gazebo_launch = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -61,12 +64,30 @@ def generate_launch_description():
             parameters=[{"use_sim_time": True}],
         )
 
+    slam_launch = IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(get_package_share_directory('slam_toolbox'), 'launch', 'localization_launch.py')   ## online_async_launch.py for mapping mode
+            ),
+            launch_arguments={'use_sim_time': 'true',
+                              'slam_params_file': slam_params}.items(),
+        )
+
+    nav2_launch = IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(get_package_share_directory('nav2_bringup'), 'launch', 'navigation_launch.py')
+            ),
+            launch_arguments={'use_sim_time': 'true',
+                              'params_file': nav2_params}.items(),
+        )
+
     return LaunchDescription([
         gazebo_launch,
         spawn_entity,
         robot_state_publisher,
         bridge,
         rviz_launch,
+        slam_launch,
+        nav2_launch,
     ])
 
 
