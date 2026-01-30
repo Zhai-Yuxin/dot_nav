@@ -22,7 +22,6 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'dot_node = dot_nav.dot_node:main'
         ],
     },
 )
