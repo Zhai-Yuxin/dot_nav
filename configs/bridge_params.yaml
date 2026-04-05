@@ -18,12 +18,12 @@
   gz_type_name: "gz.msgs.Odometry"
   direction: GZ_TO_ROS
 
-# gz topic published by DiffDrive plugin
-- ros_topic_name: "tf"
-  gz_topic_name: "tf"
-  ros_type_name: "tf2_msgs/msg/TFMessage"
-  gz_type_name: "gz.msgs.Pose_V"
-  direction: GZ_TO_ROS
+# # gz topic published by DiffDrive plugin
+# - ros_topic_name: "tf"
+#   gz_topic_name: "tf"
+#   ros_type_name: "tf2_msgs/msg/TFMessage"
+#   gz_type_name: "gz.msgs.Pose_V"
+#   direction: GZ_TO_ROS
 
 # gz topic subscribed by DiffDrive plugin
 - ros_topic_name: "cmd_vel"
@@ -33,6 +33,7 @@
   direction: ROS_TO_GZ
 
 # gz topic published by PosePublisher for ground truth pose
+## todo: what if give this straight to tf topic? any conflicts etc
 - ros_topic_name: "ground_truth"
   gz_topic_name: "model/simple_car/pose"
   ros_type_name: "tf2_msgs/msg/TFMessage"
@@ -59,6 +60,13 @@
   gz_topic_name: "camera/camera_info"
   ros_type_name: "sensor_msgs/msg/CameraInfo"
   gz_type_name: "gz.msgs.CameraInfo"
+  direction: GZ_TO_ROS
+
+# gz topic for imu
+- ros_topic_name: "imu"
+  gz_topic_name: "imu"
+  ros_type_name: "sensor_msgs/msg/Imu"
+  gz_type_name: "gz.msgs.IMU"
   direction: GZ_TO_ROS
 
 # - ros_topic_name: "/depth_camera/camera_info"
