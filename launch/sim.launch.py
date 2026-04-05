@@ -1,6 +1,6 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import IncludeLaunchDescription
+from launch.actions import IncludeLaunchDescription, ExecuteProcess
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from ament_index_python.packages import get_package_share_directory
 import os
@@ -8,10 +8,10 @@ import os
 def generate_launch_description():
 
     robot_name = 'simple_car'
-    # gz_world = '/root/Workspaces/proj2_ws/src/dot_nav/worlds/simple_shapes.sdf'
-    gz_world = '/root/Workspaces/proj2_ws/src/dot_nav/worlds/two_rooms.sdf'
+    gz_world = '/root/Workspaces/proj2_ws/src/dot_nav/worlds/simple_house.sdf'  # change for different worlds
     robot_urdf = '/root/Workspaces/proj2_ws/src/dot_nav/descriptions/simple_car.urdf'
     bridge_params = '/root/Workspaces/proj2_ws/src/dot_nav/configs/bridge_params.yaml'
+    ekf_params = '/root/Workspaces/proj2_ws/src/dot_nav/configs/ekf.yaml'
     rviz_world = '/root/Workspaces/proj2_ws/src/dot_nav/configs/rviz_robot_config.rviz'
     nav2_params = '/root/Workspaces/proj2_ws/src/dot_nav/configs/nav2_params.yaml'
     slam_params = '/root/Workspaces/proj2_ws/src/dot_nav/configs/mapper_params_online_async.yaml'
@@ -20,7 +20,7 @@ def generate_launch_description():
             PythonLaunchDescriptionSource(
                 os.path.join(get_package_share_directory('ros_gz_sim'), 'launch', 'gz_sim.launch.py')
             ),
-            launch_arguments={'gz_args': gz_world}.items()
+            launch_arguments={'gz_args': f'-r {gz_world}'}.items()
         )
 
     spawn_entity = Node(
@@ -55,6 +55,14 @@ def generate_launch_description():
             parameters=[{"use_sim_time": True}],
         )
 
+    robot_localization = Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name='ekf_filter_node',
+        output='screen',
+        parameters=[ekf_params, {'use_sim_time': True}],
+    )
+
     rviz_launch = Node(
             package='rviz2',
             executable='rviz2',
@@ -66,7 +74,7 @@ def generate_launch_description():
 
     slam_launch = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
-                os.path.join(get_package_share_directory('slam_toolbox'), 'launch', 'localization_launch.py')   ## online_async_launch.py for mapping mode
+                os.path.join(get_package_share_directory('slam_toolbox'), 'launch', 'online_async_launch.py')   # localization_launch.py for localization, online_async_launch.py for mapping
             ),
             launch_arguments={'use_sim_time': 'true',
                               'slam_params_file': slam_params}.items(),
@@ -80,14 +88,36 @@ def generate_launch_description():
                               'params_file': nav2_params}.items(),
         )
 
+    explore_lite_launch = IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(get_package_share_directory('explore_lite'), 'launch', 'explore.launch.py')
+            ),
+            launch_arguments={'use_sim_time': 'true'}.items(),
+        )
+
+    explore_status = ExecuteProcess(
+        cmd=[
+            "ros2",
+            "topic",
+            "pub",
+            "--once",
+            "/explore/resume",
+            "std_msgs/msg/Bool",
+            "{data: false}",
+        ]
+    )
+
     return LaunchDescription([
         gazebo_launch,
         spawn_entity,
         robot_state_publisher,
         bridge,
+        robot_localization,
         rviz_launch,
         slam_launch,
         nav2_launch,
+        explore_lite_launch,
+        explore_status
     ])
 
 
@@ -96,43 +126,4 @@ def generate_launch_description():
     #         executable='dot_node',
     #         name='dot_node',
     #         output='screen',
-    #     )
-
-    # ekf_node = Node(
-    #     package='robot_localization',
-    #     executable='ekf_node',
-    #     name='ekf_filter_node',
-    #     output='screen',
-    #     parameters=['/root/Workspaces/proj2_ws/src/dot_nav/configs/ekf.yaml', {'use_sim_time': True}]
-    # )
-
-    # nav2_dir = get_package_share_directory('nav2_bringup')
-    # map_file = '/root/Workspaces/proj2_ws/src/dot_nav/maps/layout1.yaml'
-    # nav2_launch = os.path.join(nav2_dir, 'launch', 'bringup_launch.py')
-    # nav2_params = '/root/Workspaces/proj2_ws/src/dot_nav/config/nav2_params.yaml'
-
-    # map_launch = Node(
-    #         package='nav2_map_server',
-    #         executable='map_server',
-    #         name='map_server',
-    #         output='screen',
-    #         parameters=[{'yaml_filename': '/root/Workspaces/proj2_ws/src/dot_nav/maps/layout1.yaml'}]
-    #     )
-
-        # joint_state_publisher,
-        # map_launch,
-        # dot_node,
-        # IncludeLaunchDescription(
-        #     PythonLaunchDescriptionSource(nav2_launch),
-        #     launch_arguments={'map': map_file, 'use_sim_time': 'false', 'params_file': nav2_params}.items(),
-        # ),
-
-    # Static TF to map the laser frame produced by the gz bridge
-    # static_tf = Node(
-    #         package='tf2_ros',
-    #         executable='static_transform_publisher',
-    #         name='static_tf_lidar',
-    #         output='screen',
-    #         parameters=[{"use_sim_time": True}],
-    #         arguments=['0', '0', '0', '0', '0', '0', 'base_link', 'simple_car/base_footprint/gpu_lidar'] # args: x y z yaw pitch roll parent_frame child_frame
     #     )
