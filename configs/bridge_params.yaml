@@ -33,7 +33,6 @@
   direction: ROS_TO_GZ
 
 # gz topic published by PosePublisher for ground truth pose
-## todo: what if give this straight to tf topic? any conflicts etc
 - ros_topic_name: "ground_truth"
   gz_topic_name: "model/simple_car/pose"
   ros_type_name: "tf2_msgs/msg/TFMessage"
