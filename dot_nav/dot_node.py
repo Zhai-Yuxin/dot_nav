@@ -6,6 +6,7 @@ from geometry_msgs.msg import Pose, PoseStamped
 from tf2_msgs.msg import TFMessage
 from sensor_msgs.msg import Image
 from nav_msgs.msg import OccupancyGrid
+from std_msgs.msg import Bool
 
 import math
 import threading
@@ -45,6 +46,8 @@ class DotNode(Node):
             base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
         )
 
+        self.explore_pub = self.create_publisher(Bool, '/explore/resume', 10)
+
         self._stop_event = threading.Event()
         self.task_thread = threading.Thread(target=self.task)
         self.task_thread.start()
@@ -54,18 +57,50 @@ class DotNode(Node):
             self.map = np.array(msg.data, dtype=np.int8)  # occupancy probabilities in range [0,100], unknown is -1
             self.map = self.map.reshape((msg.info.height, msg.info.width))
             self.map = np.flipud(self.map)
-            print("Map received: size =", self.map.shape)
+            # print("Map received: size =", self.map.shape)  ### eg (223, 375)
 
             self.resolution = msg.info.resolution
             self.origin = msg.info.origin  # geometry_msgs/Pose
-            print(f"resolution: {self.resolution}, origin: {self.origin}")
+            # print(f"resolution: {self.resolution}, origin: {self.origin}")   ### eg 0.05 geometry_msgs.msg.Pose(position=geometry_msgs.msg.Point(x=-9.355363191853257, y=-5.596854321969525, z=0.0), orientation=geometry_msgs.msg.Quaternion(x=0.0, y=0.0, z=0.0, w=1.0))
 
             img = np.zeros_like(self.map, dtype=np.uint8)
             img[self.map == 0] = 255        # free
             img[self.map == 100] = 0        # occupied
             img[self.map == -1] = 127       # unknown
-            cv2.imwrite(self.image_dir + "map.png", img)
 
+            img_color = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+            px_per_meter = int(1 / self.resolution)
+            for x in range(0, self.map.shape[1], px_per_meter):  # draw vertical grid lines
+                cv2.line(img_color, (x, 0), (x, self.map.shape[0]), (200, 200, 200), 1)
+            for y in range(0, self.map.shape[0], px_per_meter):  # draw horizontal grid lines
+                cv2.line(img_color, (0, y), (self.map.shape[1], y), (200, 200, 200), 1)
+            s=5
+            pixel_x = int((self.gt.position.x - self.origin.position.x) / self.resolution)
+            pixel_y = int((self.gt.position.y - self.origin.position.y) / self.resolution)
+            pixel_y = self.map.shape[0] - pixel_y  # flip y for image coordinates
+            pts = np.array([[pixel_x, pixel_y - s], [pixel_x - s, pixel_y + s], [pixel_x + s, pixel_y + s]], np.int32)
+            pts = pts.reshape((-1, 1, 2))
+            cv2.fillPoly(img_color, [pts], (0, 0, 255))
+            yaw = math.atan2(2.0 * (self.gt.orientation.w * self.gt.orientation.z), 1.0 - 2.0 * (self.gt.orientation.z ** 2))
+            arrow_length = 20
+            end_x = int(pixel_x + arrow_length * math.cos(yaw))
+            end_y = int(pixel_y - arrow_length * math.sin(yaw))  # flip y for image coordinates
+            cv2.arrowedLine(img_color, (pixel_x, pixel_y), (end_x, end_y), (255, 0, 0), 2, tipLength=0.3)
+
+            ring_step_m = 1.0   # distance between rings in meters
+            max_range_m = 15.0  # how far you want rings
+            px_per_meter = int(1 / self.resolution)
+            for d in np.arange(ring_step_m, max_range_m + ring_step_m, ring_step_m):
+                radius_px = int(d * px_per_meter)
+                cv2.circle(img_color, (pixel_x, pixel_y), radius_px, (0, 255, 255), 1)
+                label = f"{d:.0f}"
+                label_x = pixel_x + radius_px + 2
+                label_y = pixel_y
+                if 0 <= label_x < self.map.shape[1] and 0 <= label_y < self.map.shape[0]: # avoid drawing outside image
+                    cv2.putText(img_color, label, (label_x, label_y),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+
+            cv2.imwrite(self.image_dir + 'map_' + str(self.viewcount) + '.png', img_color)
             self.get_map = False
 
     def image_callback(self, msg):
@@ -73,6 +108,7 @@ class DotNode(Node):
             if self.get_view:
                 cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
                 self.view = cv_image
+                cv2.imwrite(self.image_dir + 'camera_image_' + str(self.viewcount) + '.png', self.view)
                 self.get_view = False
         except Exception as e:
             print(f'Failed to process image: {e}')
@@ -107,44 +143,48 @@ class DotNode(Node):
             self.get_view = True
             self.get_gt = True
             self.get_map = True
-            while self.gt is None or self.view is None or self.map is None:
+            while self.get_gt or self.get_view or self.get_map:
                 sleep(1)
 
             print(self.gt)
             filepath = self.image_dir + 'camera_image_' + str(self.viewcount) + '.png'
-            cv2.imwrite(filepath, self.view)
             camera_image = self.encode_image(filepath)
-            filepath = self.image_dir + 'map.png'
+            filepath = self.image_dir + 'map_' + str(self.viewcount) + '.png'
             map_image = self.encode_image(filepath)
+            print(f"round {self.viewcount} --------")
 
             instr_init = (
-                "You are an intelligent navigation assistant for a robot tasked to analyze the provided camera view and occupancy grid map for the next action step to fulfill instruction from the user.\n"
+                "You are an intelligent navigation assistant for a robot tasked to analyze the provided information for the next action step to fulfill instruction from the user.\n"
             )
             instr_map = (
-                "The image shows the occupancy grid map of the environment, created from 2d horizontal lidar slam tool, with white as free space, black as obstacles, and gray as unknown areas.\n"
-                f"The map has a resolution of {self.resolution} meters per pixel, coordinate originate from the bottom left of the image, with pose {self.origin}\n"
-                "The horizontal right direction of the map is the 0 degree direction for the robot.\n"
-                f"The robot has a current pose: {self.gt}. Locate the current position and facing on the map image.\n"
+                f"The map image shows the occupancy grid map of the environment, with white as free space, black as obstacles, and darkgray as unknown areas.\n"
+                # f"The map's origin has world coordinates ({self.origin.position.x}, {self.origin.position.y}) that is at the bottom left of the image.\n"
+                "Metre grids with horizontal and vertical lines are drawn on the map image in light gray color (200, 200, 200) to assist better distance estimation, with grid lines every 1 meter.\n"
+                "Distance rings are also drawn on the map image in yellow color (0, 200, 200) to assist better distance estimation, with grid lines every 1 meter and numerical labels to the right of each ring indicating the distance (in meters) from the robot that is at the center of the rings.\n"
+                "The horizontal right direction of the map image is the 0 degree direction for the robot in world frame.\n"
+                "The current position of the robot is indicated with a small red triangle on the map image, and current facing direction is indicated by a blue arrow from the triangle.\n"
+                "x-axis is increasing to the right, and y-axis is increasing upwards on the map image.\n"
             )
             instr = (
-                "The image is from the camera at the front of the robot, with horizontal_fov set to 1.5708 and clip distance from 0.1 to 10.\n"
+                "The image is from the camera at the front of the robot, with camera sensor details horizontal_fov set to 1.5708 and clip distance from 0.1m to 10m.\n"
                 f"Instruction: {user_input}.\n"
-                "Based on the current position and view, analyse carefully and output the next targeted destination to achieve the instruction.\n\n"
+                f"The robot is at currently (ground truth): {self.gt}\n"
+                "Based on the current position and view, analyse carefully and output the next targeted destination to achieve the instruction.\n"
+                "Take note of the relative current position and facing direction of the robot reflected on the map image, the camera view corresponds to the robot's field of view at the current position.\n"
+                "Navigation will be followed up with nav2 stack, so obstacle avoidance is not required to be taken into consideration, the output should be in a format that can be easily parsed for the next navigation goal.\n"
                 "There are 2 output formats that are not to be confused or mixed. The output should only follow one of the below formats that best fits the need.\n"
-                # "Format 1: <description>...</description> <target>x=1.2 y=2.3 z=0.707 w=0.707</target>\n"
-                "Format 1: <description>...</description> <target>x=1.2 y=2.3 turn=90 dir=right</target>\n"
-                # "Format 2: <description>...</description> <move>turn=90 dir=right move=0</move>\n"
+                "Format 1: <description>...</description> <target>move_x=1.2 move_y=2.3 turn=90 dir=right</target>\n"
                 "Format 2: <description>Instruction accomplished.</description>\n"
                 "The <description> tag contains short description of the current view and position and intended destination.\n"
-                # "The <target> tag contains the next targeted position, with x and y in meters, and z and w as the orientation quaternion components.\n"
-                "The <target> tag contains the next targeted position, with x and y in meters in the world coordinate, and with 'turn' in degrees and 'dir' as the turning direction from current facing direction.\n"
-                # "The <move> tag contains the next movement command for the robot from its current position, with 'turn' in degrees, 'dir' as the turning direction, and 'move' in meters to move forward after the turn.\n"
+                "The <target> tag contains information about the next targeted position. Treat the current position (red triangle) as the origin in the map image, x is increasing positive to the horizontal right direction and y is increasing positive vertically upwards. Locate the targetted destination, output the 'move_x' and 'move_y' in meters with respect to the map, and 'turn' in degrees and 'dir' as the turning direction from the current facing direction.\n"
+                "For example, <target>move_x=-1.2 move_y=2.3 turn=90 dir=right</target> means the targeted destination is 1.2 meters to the left and 2.3 meters upwards on the map image from the current position, and the robot should turn 90 degrees to the right from its current facing direction when it reaches the destination.\n"
                 "If the instruction is already accomplished by the current state, use Format 2.\n"
                 "If the instruction cannot be accomplished in one step, output the next best step.\n"
-                "A good approach to search for something in a lot of rooms is to move to the center before turning to checkout the view at each direction.\n"
-                "Take note of a radius of 0.6m around the robot as its body size when planning the destination.\n"
-                "Obstacle avoidance can be neglected and only the destination is needed.\n"
-                "Distance should be calculated with reference to the map instead of estimation from camera view.\n"
+                "Take note of a radius of 0.5m around the robot as its body size when planning the destination.\n"
+                "IMPORTANT: Distance should be estimated in combination with the map instead of estimating solely from camera view. Use the grid lines to estimate distances instead of pixels.\n"
+                "IMPORTANT: Do NOT output multiple <target> tags in single response.\n"
+                "If the instruction have similar meaning to 'explore the area', 'explore the map', 'go around', etc, ignore the above requirements and output just <explore>true</explore>\n"
+                "If the instruction have similar meaning to 'stop exploring', 'cease exploration', etc, ignore the above requirements and output just <explore>false</explore>\n"
             )
             messages=[
                 {
@@ -162,43 +202,65 @@ class DotNode(Node):
             complete = False
             while not complete:
                 try:
+                    time = self.get_clock().now().to_msg()
                     completion = self.client.chat.completions.create(
                         model="qwen3-vl-plus",  # For a list of models, see https://www.alibabacloud.com/help/model-studio/getting-started/models
                         messages=messages
                     )
+                    time_diff = self.get_clock().now().to_msg().sec - time.sec
+                    print(f"API call latency: {time_diff} seconds")
                     output = completion.choices[0].message.content
                     print("Output: ", output)
                 except Exception as e:
                     print(f"API call failed: {e}")
-                # output = "<target>x=2.0 y=1.0 z=0.707 w=0.707</target>"  # Placeholder for testing without API call
+                # output = "<move>turn=180 dir=left move=0</move>"  # Placeholder for testing without API call
+                # output = "tmp"
 
                 x, y, z, w = None, None, None, None
+                # match = re.search(r"<move>(.*?)</move>", output)
+                # if match:
+                #     content = match.group(1)
+                #     vals = {k: float(v) for k, v in re.findall(r"(move|turn)\s*=\s*(-?\d+(?:\.\d+)?)", content)}
+                #     turn = vals.get("turn", 0)
+                #     move = vals.get("move", 0)
+                #     dir_match = re.search(r"dir\s*=\s*(left|right)", content)
+                #     dire = dir_match.group(1) if dir_match else "right"
+                #     if dire == "right":
+                #         turn = -turn
+                #     yaw = math.atan2(2.0 * (self.gt.orientation.w * self.gt.orientation.z), 1.0 - 2.0 * (self.gt.orientation.z ** 2))
+                #     yaw_new = yaw + math.radians(turn)
+                #     x = self.gt.position.x + move * math.cos(yaw_new)
+                #     y = self.gt.position.y + move * math.sin(yaw_new)
+                #     z = math.sin(yaw_new / 2.0)
+                #     w = math.cos(yaw_new / 2.0)
+                # else:
                 match = re.search(r"<target>(.*?)</target>", output)
                 if match:
                     content = match.group(1)
                     vals = {k: float(v) for k, v in re.findall(r"(x|y|turn)\s*=\s*(-?\d+(?:\.\d+)?)", content)}
-                    turn = vals.get("turn")
-                    x = vals.get("x")
-                    y = vals.get("y")
+                    x = self.gt.position.x + vals.get("x")
+                    y = self.gt.position.y + vals.get("y")
+                    turn = vals.get("turn", 0)
                     dir_match = re.search(r"dir\s*=\s*(left|right)", content)
                     dire = dir_match.group(1) if dir_match else "right"
                     if dire == "right":
                         turn = -turn
                     yaw = math.atan2(2.0 * (self.gt.orientation.w * self.gt.orientation.z), 1.0 - 2.0 * (self.gt.orientation.z ** 2))
                     yaw_new = yaw + math.radians(turn)
-                    # x = self.gt.position.x + move * math.cos(yaw_new)
-                    # y = self.gt.position.y + move * math.sin(yaw_new)
                     z = math.sin(yaw_new / 2.0)
                     w = math.cos(yaw_new / 2.0)
                 else:
-                    match = re.search(r"<target>(.*?)</target>", output)
+                    match = re.search(r"<explore>(.*?)</explore>", output)
                     if match:
-                        content = match.group(1)
-                        vals = {k: float(v) for k, v in re.findall(r"(x|y|z|w)\s*=\s*(-?\d+(?:\.\d+)?)", content)}
-                        x = vals.get("x")
-                        y = vals.get("y")
-                        z = vals.get("z", 0.0)
-                        w = vals.get("w", 1.0)
+                        content = match.group(1).strip().lower()
+                        if content == "true":
+                            print("Start exploring...")
+                            self.explore_pub.publish(Bool(data=True))
+                        elif content == "false":
+                            print("Stop exploring...")
+                            self.explore_pub.publish(Bool(data=False))
+                        else:
+                            print("Invalid explore command, ignoring.")
                     else:
                         match = re.search(r"<description>(.*?)</description>", output)
                         if match:
@@ -207,49 +269,49 @@ class DotNode(Node):
                                 print("Instruction accomplished.")
                         else:
                             print("No valid tag found, no motion for now.")
-                        complete = True
+                    complete = True
 
                 if x is not None:
-                    print(f"target: x={x}, y={y}, deg={math.degrees(math.atan2(2.0 * (w * z), 1.0 - 2.0 * (z ** 2)))}")
+                    print(f"target: x={x}, y={y}, deg={math.degrees(yaw_new)}")
                     self.nav_flag = True
                     self.send_nav_goal(x, y, z, w)
 
                 self.viewcount += 1
-                self.gt = None
-                self.view = None
-                self.map = None
+
+                while self.nav_flag:
+                    sleep(1)
 
                 if not complete:
                     user_input = input("Whether to continue (y/n): ")
-                    if user_input.lower() != 'y':
+                    if user_input.lower() not in ['y', '', 'yes']:
                         complete = True
                     else:
                         self.get_view = True
                         self.get_gt = True
-                        while self.gt is None or self.view is None:
+                        self.get_map = True
+                        while self.get_gt or self.get_view or self.get_map:
                             sleep(1)
                         print(self.gt)
                         filepath = self.image_dir + 'camera_image_' + str(self.viewcount) + '.png'
-                        cv2.imwrite(filepath, self.view)
                         camera_image = self.encode_image(filepath)
+                        filepath = self.image_dir + 'map_' + str(self.viewcount) + '.png'
+                        map_image = self.encode_image(filepath)
 
                         instr_cont = (
-                            f"Current pose of the robot: {self.gt}\n"
-                            "The view is the updated camera image after the last movement, continue to analyze and provide the next targeted destination or confirm if the instruction is accomplished.\n"
-                            "Output format should follow the requirements from the initial message."
+                            f"Current pose of the robot (ground truth): {self.gt}\n"
+                            "The updated camera view and map images are provided, take note of the current view and position reflected on the map image, refer to the past messages for progress tracking.\n"
+                            "Continue to analyze and provide the next targeted destination or confirm if the instruction is accomplished.\n"
+                            "IMPT: Guidelines and outputs should follow the requirements from the initial message."
                         )
                         messages.append(completion.choices[0].message.model_dump())
                         messages.append({
                                 "role": "user",
                                 "content": [
                                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{camera_image}"},},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{map_image}"},},
                                     {"type": "text", "text": instr_cont},
                                 ]
                             })
-
-                        self.viewcount += 1
-                        self.gt = None
-                        self.view = None
 
     # ros2 action send_goal /navigate_to_pose nav2_msgs/action/NavigateToPose \
     # "{pose: {header: {frame_id: 'map'}, pose: {position: {x: 1.0, y: 2.0, z: 0.0}, orientation: {z: 0.0, w: 1.0}}}}"
