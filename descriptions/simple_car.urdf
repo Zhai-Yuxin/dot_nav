@@ -139,7 +139,7 @@
     <child link="right_wheel"/>
     <origin xyz="-0.17 -0.15 0.1" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
-    <limit effort="50000" velocity="5"/>
+    <limit effort="50000" velocity="10"/>
     <dynamics damping="1.0" friction="1.0"/>
   </joint>
 
@@ -148,7 +148,7 @@
     <child link="left_wheel"/>
     <origin xyz="-0.17 0.15 0.1" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
-    <limit effort="50000" velocity="5"/> <!-- effort is torque -->
+    <limit effort="50000" velocity="10"/> <!-- effort is torque -->
     <dynamics damping="1.0" friction="1.0"/>
   </joint>
 
@@ -276,7 +276,7 @@
         </image>
         <clip>
           <near>0.1</near>
-          <far>10</far>
+          <far>15</far>
         </clip>
         <noise>
           <type>gaussian</type>
