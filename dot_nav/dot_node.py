@@ -19,6 +19,7 @@ from openai import OpenAI
 import os
 import re
 import base64
+import time
 
 class DotNode(Node):
     def __init__(self):
@@ -26,6 +27,7 @@ class DotNode(Node):
         self.gt_sub = self.create_subscription(TFMessage, '/ground_truth', self.gt_callback, 10)
         self.gt = None
         self.get_gt = False
+        self.yaw = 0
 
         self.bridge = CvBridge()
         self.img_sub = self.create_subscription(Image, '/camera/image', self.image_callback, 1)
@@ -81,10 +83,9 @@ class DotNode(Node):
             pts = np.array([[pixel_x, pixel_y - s], [pixel_x - s, pixel_y + s], [pixel_x + s, pixel_y + s]], np.int32)
             pts = pts.reshape((-1, 1, 2))
             cv2.fillPoly(img_color, [pts], (0, 0, 255))
-            yaw = math.atan2(2.0 * (self.gt.orientation.w * self.gt.orientation.z), 1.0 - 2.0 * (self.gt.orientation.z ** 2))
             arrow_length = 20
-            end_x = int(pixel_x + arrow_length * math.cos(yaw))
-            end_y = int(pixel_y - arrow_length * math.sin(yaw))  # flip y for image coordinates
+            end_x = int(pixel_x + arrow_length * math.cos(self.yaw))
+            end_y = int(pixel_y - arrow_length * math.sin(self.yaw))  # flip y for image coordinates
             cv2.arrowedLine(img_color, (pixel_x, pixel_y), (end_x, end_y), (255, 0, 0), 2, tipLength=0.3)
 
             ring_step_m = 1.0   # distance between rings in meters
@@ -125,6 +126,8 @@ class DotNode(Node):
                     self.gt.position.y = transform.translation.y
                     self.gt.position.z = transform.translation.z
                     self.gt.orientation = transform.rotation
+
+                    self.yaw = math.atan2(2.0 * (self.gt.orientation.w * self.gt.orientation.z), 1.0 - 2.0 * (self.gt.orientation.z ** 2))
                     break
             self.get_gt = False
 
@@ -142,8 +145,10 @@ class DotNode(Node):
 
             self.get_view = True
             self.get_gt = True
+            while self.get_gt or self.get_view:
+                sleep(1)
             self.get_map = True
-            while self.get_gt or self.get_view or self.get_map:
+            while self.get_map:
                 sleep(1)
 
             print(self.gt)
@@ -157,34 +162,43 @@ class DotNode(Node):
                 "You are an intelligent navigation assistant for a robot tasked to analyze the provided information for the next action step to fulfill instruction from the user.\n"
             )
             instr_map = (
-                f"The map image shows the occupancy grid map of the environment, with white as free space, black as obstacles, and darkgray as unknown areas.\n"
-                # f"The map's origin has world coordinates ({self.origin.position.x}, {self.origin.position.y}) that is at the bottom left of the image.\n"
+                f"The map image shows the occupancy grid map of the environment, with white as free space, black as obstacles, and darkgray as unknown areas. The map image have already been processed to be visualised in world frames, the y coordinate increases vertically upwards of the image, there is no need to invert the y-axis value for the map image.\n"
                 "Metre grids with horizontal and vertical lines are drawn on the map image in light gray color (200, 200, 200) to assist better distance estimation, with grid lines every 1 meter.\n"
                 "Distance rings are also drawn on the map image in yellow color (0, 200, 200) to assist better distance estimation, with grid lines every 1 meter and numerical labels to the right of each ring indicating the distance (in meters) from the robot that is at the center of the rings.\n"
                 "The horizontal right direction of the map image is the 0 degree direction for the robot in world frame.\n"
-                "The current position of the robot is indicated with a small red triangle on the map image, and current facing direction is indicated by a blue arrow from the triangle.\n"
-                "x-axis is increasing to the right, and y-axis is increasing upwards on the map image.\n"
+                "The current position of the robot is indicated with a small red triangle on the map image, and current facing direction is indicated by the pointing direction of the blue arrow from the red triangle.\n"
+                "IMPORTANT: Map image coordinate system has x-axis increasing to the horizontal right of the map image, and y-axis increasing vertically upwards of the map image.\n"
             )
             instr = (
-                "The image is from the camera at the front of the robot, with camera sensor details horizontal_fov set to 1.5708 and clip distance from 0.1m to 10m.\n"
-                f"Instruction: {user_input}.\n"
-                f"The robot is at currently (ground truth): {self.gt}\n"
+                "The camera image is taken from the robot's position and facing direction, with camera sensor details horizontal_fov set to 1.5708 and clip distance from 0.1m to 15m.\n"
+                f"User instruction: {user_input}.\n"
+                f"The robot is at currently at ground truth position ({self.gt.position.x}, {self.gt.position.y}), facing {(math.degrees(self.yaw)+360)%360} degrees direction.\n"
+                # f"The robot is at currently facing {math.degrees(self.yaw)} degrees direction.\n"
                 "Based on the current position and view, analyse carefully and output the next targeted destination to achieve the instruction.\n"
-                "Take note of the relative current position and facing direction of the robot reflected on the map image, the camera view corresponds to the robot's field of view at the current position.\n"
+                "Take note of the relative current position and facing direction of the robot reflected on the map image, the camera view corresponds to the robot's facing direction (indicated by pointing direction of the blue arrow) at the current position.\n"
+                "Important: Note that ONLY if there are any move direction specified in user instruction (eg. move left, move right etc), it is relative to the robot's current facing direction and not world frame. As a general rule, moving direction degree relative to robot's current heading is clockwise(+90) for left and anticlockwise(-90) for right.\n"
+                "Other user instruction like 'go to xxx' 'find xxx' displacement output should be done NEGLECTING robot orientation.\n"
+                # "General rule that could refer to for move_y displacement-- if current facing direction is -90 to 90 degrees, going to a relatively left position from current direction view requires a positive y displacement, if current facing direction is 90 to 180 and -90 to -180 degrees, going to a relatively left position from current direction view requires a negative y displacement.\n"
                 "Navigation will be followed up with nav2 stack, so obstacle avoidance is not required to be taken into consideration, the output should be in a format that can be easily parsed for the next navigation goal.\n"
                 "There are 2 output formats that are not to be confused or mixed. The output should only follow one of the below formats that best fits the need.\n"
                 "Format 1: <description>...</description> <target>move_x=1.2 move_y=2.3 turn=90 dir=right</target>\n"
                 "Format 2: <description>Instruction accomplished.</description>\n"
                 "The <description> tag contains short description of the current view and position and intended destination.\n"
-                "The <target> tag contains information about the next targeted position. Treat the current position (red triangle) as the origin in the map image, x is increasing positive to the horizontal right direction and y is increasing positive vertically upwards. Locate the targetted destination, output the 'move_x' and 'move_y' in meters with respect to the map, and 'turn' in degrees and 'dir' as the turning direction from the current facing direction.\n"
-                "For example, <target>move_x=-1.2 move_y=2.3 turn=90 dir=right</target> means the targeted destination is 1.2 meters to the left and 2.3 meters upwards on the map image from the current position, and the robot should turn 90 degrees to the right from its current facing direction when it reaches the destination.\n"
+                "The <target> tag contains information about the next targeted position from the current robot position. Treat the current robot position (indicated by red triangle) as the origin in the map image, x axis is increasing positive to the horizontal right direction and y axis is increasing positive vertically upwards of the map image. Locate the targetted destination, output 'move_x' and 'move_y' in meters with respect to the map's coordinates, and 'turn' in degrees and 'dir' as the turning direction from the current facing direction.\n"
+                "For example, <target>move_x=-1.2 move_y=2.3 turn=90 dir=right</target> means the targeted destination is 1.2 meters to the left and 2.3 meters upwards on the map image from the current robot position, and the robot should turn 90 degrees to the right from its current facing direction when it reaches the destination. The x and y axis of the map image coordinates should not be affected by the robot's orientation.\n"
                 "If the instruction is already accomplished by the current state, use Format 2.\n"
                 "If the instruction cannot be accomplished in one step, output the next best step.\n"
+                "Steps to follow for visually present targets: find target visually from the camera view, locate it on the map image, estimate the relative position of the target from the robot's current position on the map image, output in the required format.\n"
+                "Do NOT estimate absolute coordinates. ALWAYS ensure consistency between verbal description and numeric target output. If there is any mismatch between reasoning and target, revise before outputting.\n"
                 "Take note of a radius of 0.5m around the robot as its body size when planning the destination.\n"
                 "IMPORTANT: Distance should be estimated in combination with the map instead of estimating solely from camera view. Use the grid lines to estimate distances instead of pixels.\n"
+                "IMPORTANT: The camera view is the ground truth for what is immediately visible in front of the robot. Do NOT assume the existence of any object that is not visible in the camera view, even if there seems to be space for it on the map. The map is only for rough localization and distance estimation, but not for object existence assumption. Always double check with the camera view and make sure the target destination is actually visible and reachable before outputting the target position.\n"
                 "IMPORTANT: Do NOT output multiple <target> tags in single response.\n"
+                "If tasked to find something and target is not present in the camera view, a good strategy is to turn around (90 degrees a time since camera horizontal_fov set to 1.5708) to inspect surroundings before moving to new uninspected area to find again.\n"
                 "If the instruction have similar meaning to 'explore the area', 'explore the map', 'go around', etc, ignore the above requirements and output just <explore>true</explore>\n"
                 "If the instruction have similar meaning to 'stop exploring', 'cease exploration', etc, ignore the above requirements and output just <explore>false</explore>\n"
+                # "CRITICAL SIGN CONSISTENCY CHECK (MANDATORY): Before outputting for <target>, you MUST verify the following - locate the target position ON the MAP IMAGE relative to the robot, if the target is to the RIGHT of the robot → move_x MUST be positive, if the target is to the LEFT of the robot → move_x MUST be negative, if the target is ABOVE the robot → move_y MUST be positive, if the target is BELOW the robot → move_y MUST be negative. If not, fix the output.\n"
+                "HARD CONSTRAINT (CANNOT BE VIOLATED):: The camera forward direction MUST match blue arrow direction on the map image. If an object is seen directly ahead in the camera: If the robot faces DOWN on the map, any object seen ahead MUST have negative move_y, if the robot faces UP on the map, move_y must be positive, if facing RIGHT on map, move_x must be positive, if facing LEFT on map, move_x must be negative. If not, fix the output.\n"
             )
             messages=[
                 {
@@ -202,18 +216,18 @@ class DotNode(Node):
             complete = False
             while not complete:
                 try:
-                    time = self.get_clock().now().to_msg()
+                    start = time.time()
                     completion = self.client.chat.completions.create(
                         model="qwen3-vl-plus",  # For a list of models, see https://www.alibabacloud.com/help/model-studio/getting-started/models
                         messages=messages
                     )
-                    time_diff = self.get_clock().now().to_msg().sec - time.sec
+                    time_diff = time.time() - start
                     print(f"API call latency: {time_diff} seconds")
                     output = completion.choices[0].message.content
                     print("Output: ", output)
                 except Exception as e:
                     print(f"API call failed: {e}")
-                # output = "<move>turn=180 dir=left move=0</move>"  # Placeholder for testing without API call
+                # output = "<target>move_x=0 move_y=0 turn=180 dir=left</target>"  # Placeholder for testing without API call
                 # output = "tmp"
 
                 x, y, z, w = None, None, None, None
@@ -234,9 +248,9 @@ class DotNode(Node):
                 #     z = math.sin(yaw_new / 2.0)
                 #     w = math.cos(yaw_new / 2.0)
                 # else:
-                match = re.search(r"<target>(.*?)</target>", output)
+                match = re.findall(r"<target>(.*?)</target>", output, re.DOTALL)
                 if match:
-                    content = match.group(1)
+                    content = match[-1]
                     vals = {k: float(v) for k, v in re.findall(r"(x|y|turn)\s*=\s*(-?\d+(?:\.\d+)?)", content)}
                     x = self.gt.position.x + vals.get("x")
                     y = self.gt.position.y + vals.get("y")
@@ -288,20 +302,25 @@ class DotNode(Node):
                     else:
                         self.get_view = True
                         self.get_gt = True
+                        while self.get_gt or self.get_view:
+                            sleep(1)
                         self.get_map = True
-                        while self.get_gt or self.get_view or self.get_map:
+                        while self.get_map:
                             sleep(1)
                         print(self.gt)
                         filepath = self.image_dir + 'camera_image_' + str(self.viewcount) + '.png'
                         camera_image = self.encode_image(filepath)
                         filepath = self.image_dir + 'map_' + str(self.viewcount) + '.png'
                         map_image = self.encode_image(filepath)
+                        print(f"round {self.viewcount} --------")
 
                         instr_cont = (
-                            f"Current pose of the robot (ground truth): {self.gt}\n"
-                            "The updated camera view and map images are provided, take note of the current view and position reflected on the map image, refer to the past messages for progress tracking.\n"
-                            "Continue to analyze and provide the next targeted destination or confirm if the instruction is accomplished.\n"
-                            "IMPT: Guidelines and outputs should follow the requirements from the initial message."
+                            f"The robot is at currently at ground truth position ({self.gt.position.x}, {self.gt.position.y}), facing {(math.degrees(self.yaw)+360)%360} degrees direction.\n"
+                            "Updated camera view and map images are provided. Use them together with prior steps to track progress toward the original user instruction."
+                            "Do maintain a consistent understanding of the goal across all steps.\n"
+                            "Double check you perceived information with camera view and corresponding map image to make sure that your assumption on goal positions is correct. If you don't see it, don't assume it's there."
+                            "Continue to analyze and output the next best step or confirm if the instruction is accomplished.\n"
+                            "IMPORTANT: All outputs MUST follow the format and guidelines from the initial message instruction."
                         )
                         messages.append(completion.choices[0].message.model_dump())
                         messages.append({
