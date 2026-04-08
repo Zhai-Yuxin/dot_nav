@@ -23,13 +23,17 @@ source venv/bin/activate
 pip install -U openai
 -- get api key and set as env variable --
 ```
-Repo cloning:
+Workspace setup:
 ```
 cd Workspaces/proj2_ws/src
 git clone https://github.com/Zhai-Yuxin/dot_nav.git
 git clone https://github.com/robo-friends/m-explore-ros2.git
 cd m-explore-ros2/
 rm -rf map_merge/
+cd ..
+git clone https://github.com/ros-perception/pointcloud_to_laserscan.git
+cd pointcloud_to_laserscan/
+git checkout -b jazzy remotes/origin/jazzy
 ```
 Build:
 ```
