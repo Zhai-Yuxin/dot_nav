@@ -11,6 +11,7 @@ def generate_launch_description():
     gz_world = '/root/Workspaces/proj2_ws/src/dot_nav/worlds/simple_house.sdf'  # change for different worlds
     robot_urdf = '/root/Workspaces/proj2_ws/src/dot_nav/descriptions/simple_car.urdf'
     bridge_params = '/root/Workspaces/proj2_ws/src/dot_nav/configs/bridge_params.yaml'
+    pointcloud_to_scan_params = '/root/Workspaces/proj2_ws/src/dot_nav/configs/pointcloud_to_laserscan.yaml'
     ekf_params = '/root/Workspaces/proj2_ws/src/dot_nav/configs/ekf.yaml'
     rviz_world = '/root/Workspaces/proj2_ws/src/dot_nav/configs/rviz_robot_config.rviz'
     nav2_params = '/root/Workspaces/proj2_ws/src/dot_nav/configs/nav2_params.yaml'
@@ -54,6 +55,15 @@ def generate_launch_description():
             ],
             parameters=[{"use_sim_time": True}],
         )
+
+    pointcloud_to_scan = Node(
+        package='pointcloud_to_laserscan',
+        executable='pointcloud_to_laserscan_node',
+        name='pointcloud_to_laserscan',
+        output='screen',
+        parameters=[pointcloud_to_scan_params],
+        remappings=[('cloud_in', '/lidar/points'), ('scan', '/scan'),],
+    )
 
     robot_localization = Node(
         package='robot_localization',
@@ -112,6 +122,7 @@ def generate_launch_description():
         spawn_entity,
         robot_state_publisher,
         bridge,
+        pointcloud_to_scan,
         robot_localization,
         rviz_launch,
         slam_launch,
